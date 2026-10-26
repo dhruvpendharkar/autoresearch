@@ -1,0 +1,22 @@
+# Copy to nodes.yaml and fill in your per-node commands.
+# `rr` runs every remote command as: <exec> '<command>'
+# so `exec` must accept one non-interactive command, the way `ssh gpu01 'nvidia-smi'` does.
+# Check with: rr doctor
+nodes:
+  gpu01: {exec: "ssh gpu01", gpus: 8, gpu_type: RTX6000}
+  gpu02: {exec: "ssh gpu02", gpus: 8, gpu_type: RTX6000}
+
+policy:
+  max_gpus_total: 8          # never hold more than this across the cluster
+  max_gpus_per_node: 4       # leave room for others on every node
+  night: {hours: "23:00-07:00", max_gpus_total: 16}   # optional: take more when it's quiet
+  free_mem_mb: 1000          # below this a GPU counts as idle
+  free_util_pct: 5
+  idle_probes: 3             # consecutive idle probes before a GPU counts as free
+  probe_interval_s: 60
+  cooldown_min: 60           # exclude a GPU after someone else grabbed it from under us
+  node_timeout_s: 30         # per remote command
+  node_max_failures: 3       # consecutive unreachable attempts before a node is marked down
+  node_down_backoff_s: 600   # how long a down node is skipped before retrying
+
+# state_dir: state           # relative to this file; must be on the filesystem the nodes share

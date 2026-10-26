@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# rr runtime state and per-cluster node config
+state/
+nodes.yaml
