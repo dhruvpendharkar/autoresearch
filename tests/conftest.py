@@ -83,3 +83,115 @@ def cluster(tmp_path):
 @pytest.fixture
 def clock():
     return FakeClock()
+
+
+# ---------------------------------------------------------------- a fake research project
+
+FAKE_TRAIN = r'''
+"""Fake training script. Behaviour is driven by key=value overrides."""
+import json, math, os, sys, time
+
+args = sys.argv[1:]
+opts = {"mode": "ok", "score": "0.5", "sleep": "0", "steps": "3"}
+seed = None
+i = 0
+while i < len(args):
+    if args[i] == "--seed":
+        seed = int(args[i + 1]); i += 2; continue
+    if args[i] == "--config":
+        opts["config"] = args[i + 1]; i += 2; continue
+    k, _, v = args[i].partition("=")
+    opts[k] = v
+    i += 1
+
+def write(path, data):
+    if path:
+        with open(path + ".tmp", "w") as fh:
+            json.dump(data, fh)
+        os.replace(path + ".tmp", path)
+
+print("args", json.dumps(opts), "seed", seed, "cuda", os.environ.get("CUDA_VISIBLE_DEVICES"), flush=True)
+for step in range(int(opts["steps"])):
+    write(os.environ.get("RR_HEARTBEAT"), {"step": step, "ts": time.time(), "loss": 1.0 / (step + 1)})
+    time.sleep(float(opts["sleep"]))
+mode = opts["mode"]
+if mode == "crash":
+    raise RuntimeError("CUDA error: an illegal memory access was encountered")
+if mode == "hang":
+    time.sleep(3600)
+if mode != "nometrics":
+    write(os.environ.get("RR_FINAL_METRICS"), {"eval/pass@1": float(opts["score"]) + (seed or 0) * 0.01})
+print("done", flush=True)
+'''
+
+
+def git(root, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def spec_yaml(study="demo", **over):
+    spec = {
+        "study": study,
+        "base_commit": "main",
+        "metric": {"name": "eval/pass@1", "direction": "max", "source": "final_metrics.json"},
+        "seeds": [0, 1],
+        "resources": {"gpus_per_run": 1, "gpu_type": "RTX6000", "run_timeout_h": 1},
+        "budget": {"gpu_hours": 100, "max_concurrent_runs": 4, "max_retries": 2},
+        "run": {"command": f"{shlex.quote(sys.executable)} train.py --config {{config}} --seed {{seed}} {{overrides}}"},
+        "smoke": {"overrides": {"steps": 1}, "timeout_min": 5},
+        "arms": [
+            {"id": "baseline", "config": "configs/base.yaml"},
+            {"id": "method", "config": "configs/base.yaml", "branch": "study/method"},
+        ],
+        "comparisons": [{"treatment": "method", "control": "baseline"}],
+        "protected_paths": ["eval/"],
+        "eval_data": ["data/eval"],
+    }
+    spec.update(over)
+    return yaml.safe_dump(spec, sort_keys=False)
+
+
+class FakeProject:
+    def __init__(self, root: Path):
+        from rr.project import Project
+
+        self.root = root
+        root.mkdir(parents=True)
+        git(root, "init", "-q")
+        (root / "train.py").write_text(FAKE_TRAIN)
+        (root / "configs").mkdir()
+        (root / "configs" / "base.yaml").write_text("lr: 0.1\n")
+        (root / "eval").mkdir()
+        (root / "eval" / "judge.py").write_text("THRESHOLD = 0.5\n")
+        (root / ".gitignore").write_text("runs/\nstudies/\ndata/\n")
+        self.commit("base")
+        git(root, "branch", "-M", "main")
+        git(root, "checkout", "-q", "-b", "study/method")
+        (root / "train.py").write_text(FAKE_TRAIN.replace('"score": "0.5"', '"score": "0.6"'))
+        self.commit("method")
+        git(root, "checkout", "-q", "main")
+        # Eval data is untracked, as large datasets usually are.
+        (root / "data" / "eval").mkdir(parents=True)
+        (root / "data" / "eval" / "test.jsonl").write_text('{"q": 1}\n')
+        self.project = Project(root.resolve())
+
+    def commit(self, msg):
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "-m", msg)
+        return git(self.root, "rev-parse", "HEAD")
+
+    def write_spec(self, study="demo", **over):
+        d = self.root / "studies" / study
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "spec.yaml").write_text(spec_yaml(study, **over))
+        return d / "spec.yaml"
+
+
+@pytest.fixture
+def fproject(tmp_path):
+    return FakeProject(tmp_path / "proj")
