@@ -80,7 +80,61 @@ def whoami(node, args):
     return 0
 
 
-TOOLS = {"nvidia-smi": nvidia_smi, "gpustat": gpustat, "ps": ps, "whoami": whoami}
+def _sessions_dir():
+    d = os.path.join(os.environ["FAKE_CLUSTER"], "tmux-" + os.environ["RR_FAKE_NODE"])
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _session_pid(name):
+    path = os.path.join(_sessions_dir(), name)
+    try:
+        pid = int(open(path).read())
+    except (FileNotFoundError, ValueError):
+        return None, path
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        os.unlink(path)
+        return None, path
+    return pid, path
+
+
+def tmux(node, args):
+    """Detached sessions as process groups: new-session -d -s, has-session -t, kill-session -t."""
+    import signal
+    import subprocess
+
+    verb, rest = args[0], args[1:]
+    target = rest[rest.index("-t") + 1].lstrip("=") if "-t" in rest else None
+    if verb == "new-session":
+        name = rest[rest.index("-s") + 1]
+        cmd = rest[rest.index("-s") + 2]
+        if _session_pid(name)[0] is not None:
+            print(f"duplicate session: {name}", file=sys.stderr)
+            return 1
+        proc = subprocess.Popen(
+            ["bash", "-c", cmd], start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        with open(os.path.join(_sessions_dir(), name), "w") as fh:
+            fh.write(str(proc.pid))
+        return 0
+    pid, path = _session_pid(target)
+    if pid is None:
+        print(f"can't find session: {target}", file=sys.stderr)
+        return 1
+    if verb == "has-session":
+        return 0
+    if verb == "kill-session":
+        os.killpg(pid, signal.SIGHUP)  # what closing the pane's pty does
+        os.unlink(path)
+        return 0
+    print(f"fake tmux: unsupported {args}", file=sys.stderr)
+    return 2
+
+
+TOOLS = {"nvidia-smi": nvidia_smi, "gpustat": gpustat, "ps": ps, "whoami": whoami, "tmux": tmux}
 
 if __name__ == "__main__":
     tool, rest = sys.argv[1], sys.argv[2:]

@@ -44,12 +44,10 @@ class FakeCluster:
         self.bin_dir = root / "fake-bin"
         self.data_dir.mkdir()
         self.bin_dir.mkdir()
-        for tool in ("nvidia-smi", "gpustat", "ps", "whoami"):
+        for tool in ("nvidia-smi", "gpustat", "ps", "whoami", "tmux"):
             p = self.bin_dir / tool
             p.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(FAKE_TOOLS))} {tool} "$@"\n')
             p.chmod(0o755)
-        (self.bin_dir / "tmux").write_text("#!/bin/sh\nexit 0\n")
-        (self.bin_dir / "tmux").chmod(0o755)
         self.execs = {}
 
     def set_node(self, name, gpus, procs=(), me="me", **flags):
@@ -117,7 +115,12 @@ for step in range(int(opts["steps"])):
 mode = opts["mode"]
 if mode == "crash":
     raise RuntimeError("CUDA error: an illegal memory access was encountered")
-if mode == "hang":
+if mode == "spawn":  # like a dataloader worker: a grandchild of run.sh
+    import subprocess
+    worker = subprocess.Popen(["sleep", "3600"])
+    with open(os.path.join(os.environ["RR_RUN_DIR"], "worker_pid"), "w") as fh:
+        fh.write(str(worker.pid))
+if mode in ("hang", "spawn"):
     time.sleep(3600)
 if mode != "nometrics":
     write(os.environ.get("RR_FINAL_METRICS"), {"eval/pass@1": float(opts["score"]) + (seed or 0) * 0.01})
