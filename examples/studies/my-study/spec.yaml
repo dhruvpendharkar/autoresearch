@@ -1,0 +1,47 @@
+# Pre-registration for one study. Copy to <project>/studies/<id>/spec.yaml.
+# `study` must match the directory name. Any edit makes `rr approve` stale.
+study: my-study
+base_commit: main               # code the baseline runs on; resolved to a sha at approval
+
+metric: {name: eval/pass@1, direction: max, source: final_metrics.json}
+seeds: [0, 1, 2]
+
+resources: {gpus_per_run: 2, gpu_type: RTX6000, run_timeout_h: 10}
+budget: {gpu_hours: 96, max_concurrent_runs: 4, max_retries: 2}
+
+# How to start training, run from the root of the run's git worktree.
+# Placeholders: {config} {seed} {overrides} {run_dir} {run_id} {arm} {study}.
+# {overrides} expands to one argument per override, formatted with
+# override_format (Hydra-style key=value by default; use "--{key}={value}"
+# for argparse). Booleans render as true/false.
+run:
+  command: "python train.py --config {config} --seed {seed} {overrides}"
+  override_format: "{key}={value}"
+
+# Smoke runs: short, one GPU, never count as results. Full runs of an arm
+# launch only after a successful smoke run of that arm at the same commit.
+smoke: {overrides: {max_steps: 50}, timeout_min: 30, gpus: 1}
+
+arms:
+  - id: baseline
+    config: configs/grpo_sync.yaml
+  - id: method
+    config: configs/grpo_async.yaml
+    branch: study/my-study        # agent-implemented; pinned at approval
+  - id: ablate_no_is_correction
+    config: configs/grpo_async.yaml
+    branch: study/my-study
+    overrides: {is_correction: false}
+
+comparisons:
+  - {treatment: method, control: baseline, test: mean_diff_bootstrap_ci}
+  - {treatment: method, control: ablate_no_is_correction}
+
+exploratory: {allowed: true, gpu_hours: 16}   # `rr submit --exploratory --set k=v`
+
+# No arm may change these relative to base_commit (checked at approve and smoke).
+protected_paths: [eval/, src/metrics/]
+# Hashed at approval; a run collected after they change is marked invalid.
+eval_data: [data/eval/]
+# Fields overnight triage may change (used from Stage 4).
+tunable: [micro_batch_size, grad_accum_steps, num_workers]
