@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "labos-rr"
+version = "0.1.0"
+description = "File-driven research runner for a shared GPU cluster without a scheduler"
+requires-python = ">=3.9"
+dependencies = [
+    "typer>=0.9",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+rr = "rr.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["rr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
