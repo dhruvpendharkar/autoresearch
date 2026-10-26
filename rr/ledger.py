@@ -22,7 +22,8 @@ HOLDS_GPUS = frozenset({"launching", "running"})
 
 TRANSITIONS = {
     None: {"queued"},
-    "queued": {"launching", "cancelled"},
+    # queued -> crash: the run could not be prepared (e.g. its commit is gone).
+    "queued": {"launching", "crash", "cancelled"},
     # launching -> queued: the pre-launch re-probe found the GPUs taken.
     "launching": {"running", "queued", "crash", "cancelled"},
     "running": {"done", "crash", "invalid", "cancelled"},

@@ -16,12 +16,13 @@ import typer
 
 from . import gpus as gpumod
 from .config import Config, ConfigError, load_config
-from .ledger import project_ledgers, reserved_gpus
+from .ledger import reserved_gpus
 from .nodes import NodeError, NodeRunner
+from .project import Project, all_ledgers, find_project
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__)
 
-_state = {"config_path": None}
+_state = {"config_path": None, "project_path": None}
 
 
 @app.callback()
@@ -29,8 +30,12 @@ def main(
     config: Optional[Path] = typer.Option(
         None, "--config", "-c", envvar="RR_CONFIG", help="Path to nodes.yaml (default: search upward from cwd)."
     ),
+    project: Optional[Path] = typer.Option(
+        None, "--project", "-p", envvar="RR_PROJECT", help="Project root holding studies/ (default: git toplevel of cwd)."
+    ),
 ):
     _state["config_path"] = config
+    _state["project_path"] = project
 
 
 def _load() -> Config:
@@ -39,6 +44,10 @@ def _load() -> Config:
     except ConfigError as e:
         typer.secho(f"config error: {e}", fg=typer.colors.RED, err=True)
         raise typer.Exit(2) from None
+
+
+def _project() -> Project:
+    return find_project(_state["project_path"])
 
 
 def _table(rows: list, headers: list) -> str:
@@ -59,7 +68,6 @@ def gpus_cmd(
     node: Optional[List[str]] = typer.Option(None, "--node", "-n", help="Probe only these nodes (repeatable)."),
     cached: bool = typer.Option(False, "--cached", help="Show the last probe from state/gpus.json without probing."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
-    project: Path = typer.Option(Path("."), "--project", help="Project root whose studies' ledgers hold reservations."),
 ):
     """Probe GPUs on every node and show which ones are free to use."""
     cfg = _load()
@@ -72,7 +80,7 @@ def gpus_cmd(
     store = gpumod.GpuState(cfg)
     state = store.load() if cached else store.refresh(NodeRunner(cfg), node or None)
     now = time.time()
-    reserved = reserved_gpus(project_ledgers(project))
+    reserved = reserved_gpus(all_ledgers(cfg, _project()))
     statuses = gpumod.classify(state, cfg, reserved, now)
     total_held, _ = gpumod.held_counts(reserved)
     cap = cfg.policy.max_total_at(datetime.fromtimestamp(now))
